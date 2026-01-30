@@ -46,22 +46,29 @@ log_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE"
 }
 
+# Load configuration utilities
+source "${SCRIPT_DIR}/config_utils.sh" 2>/dev/null || {
+    log_error "Failed to load config_utils.sh"
+    exit 1
+}
+
 # Load configuration
 load_config() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        log_error "Configuration file not found: $CONFIG_FILE"
+    if ! load_backup_config "$CONFIG_FILE"; then
+        log_error "Failed to load configuration"
         exit 1
     fi
     
-    source "$CONFIG_FILE"
+    # Check if incremental backups are enabled
+    if ! is_incremental_enabled; then
+        log "Incremental backups are disabled in configuration"
+        exit 0
+    fi
     
-    local required_vars=("FTP_HOST" "FTP_USER" "FTP_PASS" "FTP_DIR" "MYSQL_USER" "MYSQL_PASS")
-    for var in "${required_vars[@]}"; do
-        if [[ -z "${!var:-}" ]]; then
-            log_error "Required configuration variable not set: $var"
-            exit 1
-        fi
-    done
+    # Override retention if specified
+    if [[ -n "${BINLOG_RETENTION_DAYS:-}" ]]; then
+        RETENTION_DAYS="$BINLOG_RETENTION_DAYS"
+    fi
 }
 
 # Check if binary logging is enabled
@@ -132,7 +139,9 @@ backup_binary_log() {
     fi
     
     # Compress
-    if ! gzip -9 "$backup_file"; then
+    local compress_cmd
+    compress_cmd=$(get_compression_cmd)
+    if ! $compress_cmd "$backup_file"; then
         log_error "Failed to compress binary log: $binlog_name"
         rm -f "$backup_file"
         return 1
@@ -198,6 +207,11 @@ cleanup_old_backups() {
     log_success "Cleanup completed"
 }
 
+# Load resource monitor
+source "${SCRIPT_DIR}/resource_monitor.sh" 2>/dev/null || {
+    log_warning "Resource monitor not available, skipping resource checks"
+}
+
 # Main execution
 main() {
     log "=========================================="
@@ -213,6 +227,15 @@ main() {
     mkdir -p "$BINLOG_DIR"
     mkdir -p "$LOG_DIR"
     mkdir -p "$(dirname "$STATE_FILE")"
+    
+    # Check resources before starting backup (binary logs are lightweight, so quick check)
+    if [[ "$ENABLE_RESOURCE_CHECKS" == "true" ]]; then
+        check_resources "$BACKUP_DIR" "false"
+        local resource_status=$?
+        if [[ $resource_status -eq 1 ]]; then
+            log_warning "High server load detected, but binary log backups are lightweight - proceeding"
+        fi
+    fi
     
     local last_backed_log
     last_backed_log=$(get_last_backed_log)
@@ -259,21 +282,25 @@ main() {
         echo "$latest_log" > "$STATE_FILE"
     fi
     
-    # Upload backups
+    # Upload backups (if enabled)
     if [[ ${#backup_files[@]} -gt 0 ]]; then
-        log "Uploading ${#backup_files[@]} file(s) to FTP..."
-        local upload_success=0
-        local upload_fail=0
-        
-        for backup_file in "${backup_files[@]}"; do
-            if upload_to_ftp "$backup_file"; then
-                upload_success=$((upload_success + 1))
-            else
-                upload_fail=$((upload_fail + 1))
-            fi
-        done
-        
-        log "Uploaded: $upload_success, Failed: $upload_fail"
+        if should_upload_incremental_ftp; then
+            log "Uploading ${#backup_files[@]} file(s) to FTP..."
+            local upload_success=0
+            local upload_fail=0
+            
+            for backup_file in "${backup_files[@]}"; do
+                if upload_to_ftp "$backup_file"; then
+                    upload_success=$((upload_success + 1))
+                else
+                    upload_fail=$((upload_fail + 1))
+                fi
+            done
+            
+            log "Uploaded: $upload_success, Failed: $upload_fail"
+        else
+            log "FTP upload disabled in configuration, skipping upload"
+        fi
     fi
     
     cleanup_old_backups

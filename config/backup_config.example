@@ -1,17 +1,111 @@
 # Database Backup Configuration File
-# Copy this file to /root/.backup_config and fill in your credentials
+# Copy this file to /root/database_backups/config/.backup_config and fill in your credentials
 
-# MySQL/MariaDB Credentials
+###############################################################################
+# MySQL/MariaDB Credentials (REQUIRED)
+###############################################################################
 MYSQL_USER="root"
 MYSQL_PASS="your_mysql_password_here"
 
-# FTP Server Configuration
+###############################################################################
+# FTP Server Configuration (REQUIRED)
+###############################################################################
 FTP_HOST="ftp.example.com"
 FTP_USER="your_ftp_username"
 FTP_PASS="your_ftp_password"
 FTP_DIR="/backups/databases"  # Remote directory on FTP server
 
-# Backup Settings (optional - defaults are used if not set)
-# RETENTION_DAYS=30  # How many days to keep local backups
-# BACKUP_DIR="/root/backups"  # Local backup directory
-# LOG_DIR="/root/logs"  # Log directory
+###############################################################################
+# Full Backup Settings
+###############################################################################
+# RETENTION_DAYS=30              # How many days to keep local full backups (default: 30)
+# FULL_BACKUP_UPLOAD_FTP=true   # Upload full backups to FTP (default: true)
+
+###############################################################################
+# Incremental Backup Settings
+###############################################################################
+# Enable/disable incremental backups
+INCREMENTAL_BACKUPS_ENABLED=true
+
+# Incremental backup method: "binary_logs" or "table_level"
+# - binary_logs: Captures INSERTs, UPDATEs, DELETEs (requires binary logging enabled)
+# - table_level: Backs up entire changed tables (works immediately)
+INCREMENTAL_METHOD="binary_logs"
+
+# Upload incremental backups to FTP (default: true)
+INCREMENTAL_UPLOAD_FTP=true
+
+# Retention period for incremental backups
+# INCREMENTAL_RETENTION_HOURS=168  # 7 days (default: 168)
+# INCREMENTAL_RETENTION_DAYS=7     # Alternative: specify in days
+
+# Database inclusion/exclusion for incremental backups
+# Leave empty to backup all databases, or specify comma-separated list
+# Use + prefix to include only these databases, - prefix to exclude
+# Examples:
+#   INCREMENTAL_DATABASES=""                    # Backup all databases (default)
+#   INCREMENTAL_DATABASES="+db1,db2,db3"       # Only backup db1, db2, db3
+#   INCREMENTAL_DATABASES="-test_db,temp_db"   # Backup all except test_db and temp_db
+INCREMENTAL_DATABASES=""
+
+# Binary log specific settings
+# BINLOG_BACKUP_INTERVAL_MINUTES=15  # How often to backup binary logs (default: 15)
+# BINLOG_RETENTION_DAYS=7            # How long to keep binary log backups (default: 7)
+
+# Table-level incremental specific settings
+# TABLE_INCREMENTAL_CHECK_INTERVAL=3600  # Seconds between checks (default: 3600 = 1 hour)
+
+###############################################################################
+# Resource Monitoring Settings
+###############################################################################
+# Enable resource monitoring to pause backups during high load
+ENABLE_RESOURCE_CHECKS=true
+
+# Resource thresholds (backup will pause if exceeded)
+# CPU_LOAD_THRESHOLD=2.0              # Load average per CPU core (default: 2.0)
+# MEMORY_USAGE_THRESHOLD=85           # Memory usage percentage (default: 85%)
+# DISK_IO_WAIT_THRESHOLD=50          # Disk I/O wait percentage (default: 50%)
+# DISK_SPACE_THRESHOLD=10             # Minimum free disk space percentage (default: 10%)
+# MYSQL_CONNECTIONS_THRESHOLD=80      # MySQL connection usage percentage (default: 80%)
+
+# Resource wait settings
+# RESOURCE_WAIT_MAX_MINUTES=30       # Maximum minutes to wait for resources (default: 30)
+# RESOURCE_CHECK_INTERVAL=60          # Seconds between resource checks while waiting (default: 60)
+
+###############################################################################
+# Advanced Settings
+###############################################################################
+# Compression level (1-9, higher = better compression but slower)
+# COMPRESSION_LEVEL=9  # Default: 9 (maximum compression)
+
+# Log verbosity: "quiet", "normal", "verbose"
+# LOG_VERBOSITY="normal"  # Default: normal
+
+# Email notifications (optional)
+# EMAIL_ON_ERROR=false           # Send email on backup errors (default: false)
+# EMAIL_RECIPIENT="admin@example.com"
+# EMAIL_SMTP_HOST="smtp.example.com"
+# EMAIL_SMTP_PORT=587
+# EMAIL_SMTP_USER="smtp_user"
+# EMAIL_SMTP_PASS="smtp_password"
+# EMAIL_FROM="backups@example.com"
+
+# Backup size limits (optional - prevents runaway backups)
+# MAX_BACKUP_SIZE_MB=10240      # Maximum size per backup file in MB (default: unlimited)
+# MAX_TOTAL_BACKUPS_SIZE_GB=100  # Maximum total backup size in GB (default: unlimited)
+
+# Performance settings
+# MYSQLDUMP_OPTIONS="--single-transaction --quick --lock-tables=false"  # Custom mysqldump options
+# PARALLEL_BACKUPS=false  # Run multiple database backups in parallel (default: false)
+
+# Paths (usually don't need to change)
+# BACKUP_DIR="/root/database_backups/backups"
+# LOG_DIR="/root/database_backups/logs"
+
+###############################################################################
+# Notes
+###############################################################################
+# - All boolean values: true/false (case-insensitive)
+# - All numeric values: integers only
+# - Database names are case-sensitive
+# - Changes to config require script restart (if running via cron, next run will use new config)

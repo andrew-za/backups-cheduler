@@ -24,7 +24,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="${LOG_DIR}/incremental_backup_${TIMESTAMP}.log"
 ERROR_LOG="${LOG_DIR}/backup_errors.log"
 STATE_FILE="${BASE_DIR}/config/.backup_state"
-RETENTION_HOURS=168  # Keep incremental backups for 7 days
+RETENTION_HOURS=168  # Default: Keep incremental backups for 7 days (overridden by config)
 
 # Colors for output
 RED='\033[0;31m'
@@ -52,23 +52,29 @@ log_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE"
 }
 
+# Load configuration utilities
+source "${SCRIPT_DIR}/config_utils.sh" 2>/dev/null || {
+    log_error "Failed to load config_utils.sh"
+    exit 1
+}
+
 # Load configuration
 load_config() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        log_error "Configuration file not found: $CONFIG_FILE"
+    if ! load_backup_config "$CONFIG_FILE"; then
+        log_error "Failed to load configuration"
         exit 1
     fi
     
-    source "$CONFIG_FILE"
+    # Check if incremental backups are enabled
+    if ! is_incremental_enabled; then
+        log "Incremental backups are disabled in configuration"
+        exit 0
+    fi
     
-    # Validate required variables
-    local required_vars=("FTP_HOST" "FTP_USER" "FTP_PASS" "FTP_DIR" "MYSQL_USER" "MYSQL_PASS")
-    for var in "${required_vars[@]}"; do
-        if [[ -z "${!var:-}" ]]; then
-            log_error "Required configuration variable not set: $var"
-            exit 1
-        fi
-    done
+    # Override retention if specified
+    if [[ -n "${INCREMENTAL_RETENTION_HOURS:-}" ]]; then
+        RETENTION_HOURS="$INCREMENTAL_RETENTION_HOURS"
+    fi
 }
 
 # Initialize directories
@@ -79,11 +85,18 @@ init_directories() {
     mkdir -p "$(dirname "$STATE_FILE")"
 }
 
-# Get list of databases to backup
-get_databases() {
+# Get list of all user databases
+get_all_databases() {
     mysql -u"$MYSQL_USER" -p"$MYSQL_PASS" -e "SHOW DATABASES;" 2>/dev/null | \
         grep -vE "^Database$|^information_schema$|^performance_schema$|^mysql$|^sys$" | \
         grep -v "^$" || true
+}
+
+# Get list of databases to backup (filtered by config)
+get_databases() {
+    local all_dbs
+    all_dbs=$(get_all_databases)
+    filter_databases_for_incremental "$all_dbs"
 }
 
 # Get table modification times for a database
@@ -285,6 +298,11 @@ cleanup_old_backups() {
     log_success "Cleanup completed"
 }
 
+# Load resource monitor
+source "${SCRIPT_DIR}/resource_monitor.sh" 2>/dev/null || {
+    log_warning "Resource monitor not available, skipping resource checks"
+}
+
 # Main execution
 main() {
     log "=========================================="
@@ -296,6 +314,14 @@ main() {
     
     # Initialize directories
     init_directories
+    
+    # Check resources before starting backup
+    if [[ "$ENABLE_RESOURCE_CHECKS" == "true" ]]; then
+        if ! wait_for_resources "$BACKUP_DIR"; then
+            log_error "Backup cancelled due to high server load"
+            exit 1
+        fi
+    fi
     
     # Get list of databases
     local databases
@@ -324,25 +350,29 @@ main() {
         done <<< "$db_backups"
     done <<< "$databases"
     
-    # Upload backups to FTP
+    # Upload backups to FTP (if enabled)
     if [[ ${#backup_files[@]} -gt 0 ]]; then
-        log "=========================================="
-        log "Starting FTP Upload Process"
-        log "=========================================="
-        
-        local upload_success=0
-        local upload_fail=0
-        
-        for backup_file in "${backup_files[@]}"; do
-            if upload_to_ftp "$backup_file"; then
-                upload_success=$((upload_success + 1))
-            else
-                upload_fail=$((upload_fail + 1))
-            fi
-        done
-        
-        log "Files uploaded successfully: $upload_success"
-        log "Files upload failed: $upload_fail"
+        if should_upload_incremental_ftp; then
+            log "=========================================="
+            log "Starting FTP Upload Process"
+            log "=========================================="
+            
+            local upload_success=0
+            local upload_fail=0
+            
+            for backup_file in "${backup_files[@]}"; do
+                if upload_to_ftp "$backup_file"; then
+                    upload_success=$((upload_success + 1))
+                else
+                    upload_fail=$((upload_fail + 1))
+                fi
+            done
+            
+            log "Files uploaded successfully: $upload_success"
+            log "Files upload failed: $upload_fail"
+        else
+            log "FTP upload disabled in configuration, skipping upload"
+        fi
     else
         log "No changes detected, skipping FTP upload"
     fi

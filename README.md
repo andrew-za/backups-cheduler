@@ -413,6 +413,59 @@ Modify scripts to upload to multiple FTP servers or add S3/cloud storage support
 | `setup_incremental_backups.sh` | Setup incremental backup cron | N/A | Run once to configure |
 | `enable_binary_logging.sh` | Enable MySQL binary logging | N/A | Run once before binary log backups |
 
+## Resource Monitoring
+
+The backup system includes intelligent resource monitoring to prevent backups from impacting server performance during high load.
+
+### Features
+
+- **CPU Load Monitoring** - Checks load average per CPU core
+- **Memory Usage Monitoring** - Tracks RAM usage percentage
+- **Disk I/O Monitoring** - Monitors disk I/O wait times
+- **Disk Space Monitoring** - Ensures sufficient free space
+- **MySQL Connection Monitoring** - Tracks database connection usage
+- **Automatic Pause** - Waits for resources to become available
+- **Configurable Thresholds** - Adjust sensitivity in config file
+
+### Configuration
+
+Enable/disable and configure thresholds in `config/.backup_config`:
+
+```bash
+# Enable resource monitoring
+ENABLE_RESOURCE_CHECKS=true
+
+# Set thresholds
+CPU_LOAD_THRESHOLD=2.0              # Load per core
+MEMORY_USAGE_THRESHOLD=85           # Percentage
+DISK_IO_WAIT_THRESHOLD=50           # Percentage
+DISK_SPACE_THRESHOLD=10             # Minimum free %
+MYSQL_CONNECTIONS_THRESHOLD=80       # Percentage
+
+# Wait settings
+RESOURCE_WAIT_MAX_MINUTES=30       # Max wait time
+RESOURCE_CHECK_INTERVAL=60          # Check interval (seconds)
+```
+
+### How It Works
+
+1. Before starting backup, scripts check current resource usage
+2. If thresholds exceeded, backup waits and retries periodically
+3. After maximum wait time, backup is cancelled if resources still unavailable
+4. Binary log backups are lightweight and proceed even with warnings
+
+### Manual Resource Check
+
+Test resource monitoring manually:
+
+```bash
+# Check current resources
+./scripts/resource_monitor.sh /root/database_backups/backups check
+
+# Wait for resources to become available
+./scripts/resource_monitor.sh /root/database_backups/backups wait
+```
+
 ## Best Practices
 
 1. **Test Backups Regularly** - Verify backups can be restored
@@ -423,6 +476,8 @@ Modify scripts to upload to multiple FTP servers or add S3/cloud storage support
 6. **Monitor Disk Space** - Ensure sufficient space for backups
 7. **Review Retention Policies** - Adjust based on business needs
 8. **Secure Credentials** - Protect configuration files
+9. **Configure Resource Thresholds** - Adjust based on your server capacity
+10. **Monitor Resource Checks** - Review logs to optimize thresholds
 
 ## Support
 

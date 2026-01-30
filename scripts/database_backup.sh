@@ -51,24 +51,24 @@ log_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE"
 }
 
+# Load configuration utilities
+source "${SCRIPT_DIR}/config_utils.sh" 2>/dev/null || {
+    log_error "Failed to load config_utils.sh"
+    exit 1
+}
+
 # Load configuration
 load_config() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        log_error "Configuration file not found: $CONFIG_FILE"
+    if ! load_backup_config "$CONFIG_FILE"; then
+        log_error "Failed to load configuration"
         log_error "Please create it using the template: ${BASE_DIR}/config/backup_config.example"
         exit 1
     fi
     
-    source "$CONFIG_FILE"
-    
-    # Validate required variables
-    local required_vars=("FTP_HOST" "FTP_USER" "FTP_PASS" "FTP_DIR" "MYSQL_USER" "MYSQL_PASS")
-    for var in "${required_vars[@]}"; do
-        if [[ -z "${!var:-}" ]]; then
-            log_error "Required configuration variable not set: $var"
-            exit 1
-        fi
-    done
+    # Override retention if specified
+    if [[ -n "${RETENTION_DAYS:-}" ]]; then
+        RETENTION_DAYS="$RETENTION_DAYS"
+    fi
 }
 
 # Initialize directories
@@ -132,7 +132,9 @@ backup_database() {
     
     # Compress backup
     log "Compressing backup for $db_name"
-    if ! gzip -9 "$backup_file"; then
+    local compress_cmd
+    compress_cmd=$(get_compression_cmd)
+    if ! $compress_cmd "$backup_file"; then
         log_error "Failed to compress backup for $db_name"
         rm -f "$backup_file"
         return 1
@@ -221,6 +223,11 @@ cleanup_old_backups() {
     log_success "Cleanup completed"
 }
 
+# Load resource monitor
+source "${SCRIPT_DIR}/resource_monitor.sh" 2>/dev/null || {
+    log_warning "Resource monitor not available, skipping resource checks"
+}
+
 # Main execution
 main() {
     log "=========================================="
@@ -232,6 +239,14 @@ main() {
     
     # Initialize directories
     init_directories
+    
+    # Check resources before starting backup
+    if [[ "$ENABLE_RESOURCE_CHECKS" == "true" ]]; then
+        if ! wait_for_resources "$BACKUP_DIR"; then
+            log_error "Backup cancelled due to high server load"
+            exit 1
+        fi
+    fi
     
     # Get list of databases
     local databases
@@ -267,23 +282,32 @@ main() {
         fi
     done <<< "$databases"
     
-    # Upload backups to FTP
-    log "=========================================="
-    log "Starting FTP Upload Process"
-    log "=========================================="
-    
-    local upload_success=0
-    local upload_fail=0
-    
-    for backup_file in "${backup_files[@]}"; do
-        [[ ! -f "$backup_file" ]] && continue
+    # Upload backups to FTP (if enabled)
+    if should_upload_full_ftp; then
+        log "=========================================="
+        log "Starting FTP Upload Process"
+        log "=========================================="
         
-        if upload_to_ftp "$backup_file"; then
-            upload_success=$((upload_success + 1))
-        else
-            upload_fail=$((upload_fail + 1))
-        fi
-    done
+        local upload_success=0
+        local upload_fail=0
+        
+        for backup_file in "${backup_files[@]}"; do
+            [[ ! -f "$backup_file" ]] && continue
+            
+            if upload_to_ftp "$backup_file"; then
+                upload_success=$((upload_success + 1))
+            else
+                upload_fail=$((upload_fail + 1))
+            fi
+        done
+        
+        log "Files uploaded successfully: $upload_success"
+        log "Files upload failed: $upload_fail"
+    else
+        log "FTP upload disabled in configuration, skipping upload"
+        upload_success=0
+        upload_fail=0
+    fi
     
     # Cleanup old backups
     cleanup_old_backups
