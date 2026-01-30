@@ -1,9 +1,13 @@
 # Configuration files with sensitive credentials
 config/.backup_config
+config/.backup_state
+config/.binlog_state
 
 # Backup files (too large for git)
 backups/*.sql.gz
 backups/*.sha256
+backups/incremental/*
+backups/binlogs/*
 
 # Log files
 logs/*.log
