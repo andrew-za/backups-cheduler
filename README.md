@@ -113,7 +113,7 @@ Two methods available for efficient frequent backups:
 
 #### Method 1: Table-Level Incremental
 
-Backs up only tables that have been modified since the last backup.
+Backs up entire tables that have been modified since the last backup.
 
 **Usage:**
 ```bash
@@ -121,18 +121,41 @@ Backs up only tables that have been modified since the last backup.
 ```
 
 **How it works:**
-- Checks table modification timestamps
-- Only backs up changed tables
+- Checks table modification timestamps (`UPDATE_TIME`)
+- Backs up **entire tables** that have changed
+- Skips unchanged tables completely
 - Tracks state in `.backup_state` file
-- Minimal resource usage
 
-**Best for:** Immediate use, moderate change volumes
+**What it backs up:** Entire changed tables (not just new rows)
+
+**Best for:** Tables with frequent full updates, moderate change volumes
 
 **Recommended Schedule:** Hourly
 
-#### Method 2: Binary Log Backups
+#### Method 1b: Row-Level Incremental (NEW ROWS ONLY)
 
-Backs up MySQL binary logs containing all database changes.
+Backs up only **new rows** added since the last backup.
+
+**Usage:**
+```bash
+./scripts/incremental_backup_rows.sh
+```
+
+**How it works:**
+- Automatically detects incremental columns (auto-increment IDs, timestamps)
+- Uses WHERE clauses to backup only rows with higher ID/timestamp
+- Only processes new data, not entire tables
+- Tracks last backed up value per table
+
+**What it backs up:** Only new rows (INSERTs), not updates to existing rows
+
+**Best for:** Tables with auto-increment IDs or timestamp columns, append-only data
+
+**Recommended Schedule:** Hourly or every 15 minutes
+
+#### Method 2: Binary Log Backups (TRUE INCREMENTAL - ALL CHANGES)
+
+Backs up MySQL binary logs containing **all database changes** (INSERTs, UPDATEs, DELETEs).
 
 **Prerequisites:**
 ```bash
@@ -147,11 +170,14 @@ Backs up MySQL binary logs containing all database changes.
 
 **How it works:**
 - Copies MySQL binary log files
-- Contains all changes since last full backup
-- Most efficient method
+- Contains **all changes** (INSERTs, UPDATEs, DELETEs) since last full backup
+- Most efficient method - just copies log files
 - Enables point-in-time recovery
+- Captures every change, not just new rows
 
-**Best for:** High-frequency changes, production environments
+**What it backs up:** All changes (INSERTs, UPDATEs, DELETEs) - the complete change log
+
+**Best for:** High-frequency changes, production environments, when you need to capture updates/deletes too
 
 **Recommended Schedule:** Every 15 minutes
 
@@ -231,15 +257,29 @@ mysqlbinlog backups/binlogs/mysql-bin.000002 | mysql -u root -p dbname
 
 ### Restore Incremental Backup
 
-Incremental backups contain only changed data. Restore full backup first, then apply incrementals:
+**Table-Level Incremental:**
+Restore full backup first, then apply incremental table dumps:
 
 ```bash
 # Restore full backup
 gunzip < backups/dbname_YYYYMMDD_HHMMSS.sql.gz | mysql -u root -p dbname
 
-# Apply incremental changes
+# Apply incremental table dumps (entire changed tables)
 gunzip < backups/incremental/dbname_tablename_YYYYMMDD_HHMMSS.sql.gz | mysql -u root -p dbname
 ```
+
+**Row-Level Incremental (New Rows Only):**
+Restore full backup first, then apply new rows:
+
+```bash
+# Restore full backup
+gunzip < backups/dbname_YYYYMMDD_HHMMSS.sql.gz | mysql -u root -p dbname
+
+# Apply new rows (only INSERTs, not UPDATEs)
+gunzip < backups/incremental_rows/dbname_tablename_YYYYMMDD_HHMMSS.sql.gz | mysql -u root -p dbname
+```
+
+**Note:** Row-level incremental only captures new rows (INSERTs). For UPDATEs and DELETEs, use binary log backups.
 
 ## Troubleshooting
 
@@ -358,15 +398,16 @@ Modify scripts to upload to multiple FTP servers or add S3/cloud storage support
 
 ## Scripts Reference
 
-| Script | Purpose | Usage |
-|--------|---------|-------|
-| `database_backup.sh` | Full database backups | Run manually or via cron |
-| `incremental_backup.sh` | Table-level incremental backups | Run hourly via cron |
-| `backup_binary_logs.sh` | Binary log backups | Run every 15 min via cron |
-| `verify_backup.sh` | Verify backup integrity | Run manually for verification |
-| `setup_backup_cron.sh` | Setup full backup cron job | Run once to configure |
-| `setup_incremental_backups.sh` | Setup incremental backup cron | Run once to configure |
-| `enable_binary_logging.sh` | Enable MySQL binary logging | Run once before binary log backups |
+| Script | Purpose | What It Backs Up | Usage |
+|--------|---------|------------------|-------|
+| `database_backup.sh` | Full database backups | Complete databases | Run manually or via cron |
+| `incremental_backup.sh` | Table-level incremental | Entire changed tables | Run hourly via cron |
+| `incremental_backup_rows.sh` | Row-level incremental | Only new rows (INSERTs) | Run hourly via cron |
+| `backup_binary_logs.sh` | Binary log backups | All changes (INSERT/UPDATE/DELETE) | Run every 15 min via cron |
+| `verify_backup.sh` | Verify backup integrity | N/A | Run manually for verification |
+| `setup_backup_cron.sh` | Setup full backup cron job | N/A | Run once to configure |
+| `setup_incremental_backups.sh` | Setup incremental backup cron | N/A | Run once to configure |
+| `enable_binary_logging.sh` | Enable MySQL binary logging | N/A | Run once before binary log backups |
 
 ## Best Practices
 
