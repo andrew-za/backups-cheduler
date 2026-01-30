@@ -36,41 +36,75 @@ echo "Incremental Backup Setup"
 echo "=========================================="
 echo ""
 echo "Choose backup method:"
-echo "1) Table-level incremental (works immediately, no MySQL config)"
-echo "2) Binary log backups (most efficient, requires binary logging)"
-echo "3) Both (table-level hourly + binary logs every 15 minutes)"
+echo ""
+echo "1) Binary log backups (RECOMMENDED - captures INSERTs, UPDATEs, DELETEs)"
+echo "   - Most efficient and complete incremental backup"
+echo "   - Captures ALL changes, not just new rows"
+echo "   - Requires binary logging enabled"
+echo ""
+echo "2) Table-level incremental (entire changed tables)"
+echo "   - Works immediately, no MySQL config needed"
+echo "   - Backs up entire tables that changed"
+echo ""
+echo "3) Both (binary logs every 15 min + table-level hourly)"
 echo ""
 read -p "Enter choice [1-3]: " choice
 
 case $choice in
     1)
-        BACKUP_SCRIPT="$INCREMENTAL_SCRIPT"
-        SCHEDULE="0 * * * *"  # Every hour
-        METHOD="table-level incremental"
-        ;;
-    2)
         BACKUP_SCRIPT="$BINLOG_SCRIPT"
         SCHEDULE="*/15 * * * *"  # Every 15 minutes
-        METHOD="binary log"
+        METHOD="binary log (captures INSERTs, UPDATEs, DELETEs)"
         
         # Check if binary logging is enabled
         echo ""
         echo "Checking binary logging status..."
         if mysql -e "SHOW VARIABLES LIKE 'log_bin';" 2>/dev/null | grep -q "ON"; then
-            echo "Binary logging is enabled ✓"
+            echo "✓ Binary logging is enabled"
         else
-            echo "WARNING: Binary logging is not enabled!"
-            echo "Run: ${SCRIPT_DIR}/enable_binary_logging.sh"
-            read -p "Continue anyway? [y/N]: " continue_choice
-            if [[ "$continue_choice" != "y" ]] && [[ "$continue_choice" != "Y" ]]; then
-                exit 1
+            echo ""
+            echo "⚠ Binary logging is not enabled!"
+            echo ""
+            read -p "Enable binary logging now? [Y/n]: " enable_choice
+            if [[ "$enable_choice" != "n" ]] && [[ "$enable_choice" != "N" ]]; then
+                echo ""
+                echo "Enabling binary logging..."
+                "${SCRIPT_DIR}/enable_binary_logging.sh"
+                if [[ $? -ne 0 ]]; then
+                    echo ""
+                    echo "Failed to enable binary logging. Please run manually:"
+                    echo "  ${SCRIPT_DIR}/enable_binary_logging.sh"
+                    exit 1
+                fi
+            else
+                echo "You can enable it later with: ${SCRIPT_DIR}/enable_binary_logging.sh"
+                read -p "Continue setup anyway? [y/N]: " continue_choice
+                if [[ "$continue_choice" != "y" ]] && [[ "$continue_choice" != "Y" ]]; then
+                    exit 1
+                fi
             fi
         fi
+        ;;
+    2)
+        BACKUP_SCRIPT="$INCREMENTAL_SCRIPT"
+        SCHEDULE="0 * * * *"  # Every hour
+        METHOD="table-level incremental (entire changed tables)"
         ;;
     3)
         # Setup both
         echo ""
         echo "Setting up both methods..."
+        
+        # Check binary logging for binary log backups
+        if mysql -e "SHOW VARIABLES LIKE 'log_bin';" 2>/dev/null | grep -q "ON"; then
+            echo "✓ Binary logging is enabled"
+        else
+            echo "⚠ Binary logging not enabled - will skip binary log backups"
+            read -p "Enable binary logging now? [Y/n]: " enable_choice
+            if [[ "$enable_choice" != "n" ]] && [[ "$enable_choice" != "N" ]]; then
+                "${SCRIPT_DIR}/enable_binary_logging.sh"
+            fi
+        fi
         
         # Remove old cron entries
         crontab -l 2>/dev/null | grep -v "$INCREMENTAL_SCRIPT" | grep -v "$BINLOG_SCRIPT" | crontab - || true
@@ -78,13 +112,19 @@ case $choice in
         # Add table-level incremental (hourly)
         (crontab -l 2>/dev/null; echo "0 * * * * ${INCREMENTAL_SCRIPT} >> ${CRON_LOG} 2>&1") | crontab -
         
-        # Add binary log backup (every 15 minutes)
-        (crontab -l 2>/dev/null; echo "*/15 * * * * ${BINLOG_SCRIPT} >> ${CRON_LOG} 2>&1") | crontab -
+        # Add binary log backup (every 15 minutes) if enabled
+        if mysql -e "SHOW VARIABLES LIKE 'log_bin';" 2>/dev/null | grep -q "ON"; then
+            (crontab -l 2>/dev/null; echo "*/15 * * * * ${BINLOG_SCRIPT} >> ${CRON_LOG} 2>&1") | crontab -
+            echo ""
+            echo "Both backup methods configured!"
+            echo "Table-level incremental: Every hour"
+            echo "Binary log backups: Every 15 minutes"
+        else
+            echo ""
+            echo "Table-level incremental configured (hourly)"
+            echo "Binary log backups skipped (binary logging not enabled)"
+        fi
         
-        echo ""
-        echo "Both backup methods configured!"
-        echo "Table-level incremental: Every hour"
-        echo "Binary log backups: Every 15 minutes"
         echo ""
         echo "Current crontab entries:"
         crontab -l | grep -E "($INCREMENTAL_SCRIPT|$BINLOG_SCRIPT)"

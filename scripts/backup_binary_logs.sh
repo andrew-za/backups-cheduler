@@ -4,8 +4,9 @@
 # Binary Log Backup Script
 # 
 # This script backs up MySQL binary logs for point-in-time recovery.
-# Binary logs contain all changes since the last full backup.
-# This is the most efficient method for incremental backups.
+# Binary logs contain ALL changes (INSERTs, UPDATEs, DELETEs) since the last full backup.
+# This is the ONLY method that captures UPDATEs and DELETEs, not just new rows.
+# Most efficient and complete incremental backup method.
 ###############################################################################
 
 set -euo pipefail
@@ -106,10 +107,28 @@ backup_binary_log() {
         return 1
     fi
     
-    # Copy binary log
-    if ! cp "$source_file" "$backup_file"; then
-        log_error "Failed to copy binary log: $binlog_name"
-        return 1
+    # Check if this is the current active log (might be actively written to)
+    local current_log
+    current_log=$(mysql -u"$MYSQL_USER" -p"$MYSQL_PASS" -e "SHOW MASTER STATUS\G" 2>/dev/null | grep "File:" | awk '{print $2}' || echo "")
+    
+    # For active log, flush logs first to ensure we get a complete copy
+    if [[ "$binlog_name" == "$current_log" ]]; then
+        log "Flushing binary logs to ensure complete backup of active log"
+        mysql -u"$MYSQL_USER" -p"$MYSQL_PASS" -e "FLUSH BINARY LOGS;" 2>/dev/null || true
+        sleep 1  # Brief pause to ensure flush completes
+    fi
+    
+    # Copy binary log using mysqlbinlog for safety (handles active logs better)
+    # But first try direct copy (faster)
+    if ! cp "$source_file" "$backup_file" 2>/dev/null; then
+        log_warning "Direct copy failed, trying alternative method..."
+        # Alternative: use mysqlbinlog to read and save
+        if ! mysqlbinlog "$source_file" > "${backup_file}.txt" 2>/dev/null; then
+            log_error "Failed to backup binary log: $binlog_name"
+            rm -f "${backup_file}.txt"
+            return 1
+        fi
+        mv "${backup_file}.txt" "$backup_file"
     fi
     
     # Compress

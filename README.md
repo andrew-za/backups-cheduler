@@ -81,10 +81,14 @@ tail -f logs/backup_*.log
 # Custom: ./scripts/setup_backup_cron.sh "0 3 * * *"
 ```
 
-**Incremental Backups (Hourly):**
+**Incremental Backups (Captures INSERTs, UPDATEs, DELETEs):**
 ```bash
+# First enable binary logging (required for capturing UPDATEs/DELETEs)
+./scripts/enable_binary_logging.sh
+
+# Then setup incremental backups
 ./scripts/setup_incremental_backups.sh
-# Follow the interactive prompts to choose your method
+# Choose option 1 (Binary log backups - RECOMMENDED)
 ```
 
 ## Backup Methods
