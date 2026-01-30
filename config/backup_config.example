@@ -1,0 +1,17 @@
+# Database Backup Configuration File
+# Copy this file to /root/.backup_config and fill in your credentials
+
+# MySQL/MariaDB Credentials
+MYSQL_USER="root"
+MYSQL_PASS="your_mysql_password_here"
+
+# FTP Server Configuration
+FTP_HOST="ftp.example.com"
+FTP_USER="your_ftp_username"
+FTP_PASS="your_ftp_password"
+FTP_DIR="/backups/databases"  # Remote directory on FTP server
+
+# Backup Settings (optional - defaults are used if not set)
+# RETENTION_DAYS=30  # How many days to keep local backups
+# BACKUP_DIR="/root/backups"  # Local backup directory
+# LOG_DIR="/root/logs"  # Log directory
